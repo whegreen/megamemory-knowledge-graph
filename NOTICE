@@ -1,0 +1,13 @@
+megamemory-kg
+Copyright 2026 megamemory-kg contributors
+
+This product includes software derived from "knowledge-graph-reasoning"
+by Swarm Labs USA, licensed under the Apache License, Version 2.0:
+https://github.com/michaelwinczuk/knowledge-graph-reasoning
+
+The deterministic reasoning core was originally developed as a project-local
+tool and is distributed here in sanitised, generic form. The upstream project
+contributed the ideas of adversarial validation, graph traversal, health
+metrics and the six-step reasoning pipeline.
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Guard DB: jalankan sebelum commit. Tanpa DB di staged → no-op.
+exec node --no-warnings "$(dirname "$0")/guard.mjs" "$@"

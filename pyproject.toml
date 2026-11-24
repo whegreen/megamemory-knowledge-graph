@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "megamemory-kg"
+version = "0.1.0"
+description = "Read-only graph reasoning companion for megamemory knowledge.db (MCP + CLI)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "megamemory-kg contributors" }]
+keywords = ["megamemory", "knowledge-graph", "mcp", "sqlite"]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/whegreen/megamemory-knowledge-graph"
+Attribution = "https://github.com/michaelwinczuk/knowledge-graph-reasoning"
+
+[project.scripts]
+megamemory-kg = "megamemory_kg.mcp_server:main"
+mmkg = "megamemory_kg.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/megamemory_kg"]

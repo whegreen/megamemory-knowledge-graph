@@ -1,0 +1,46 @@
+#!/bin/sh
+# Opsi A universal: repair → checkpoint → gate konflik → guard → auto-commit DB.
+# Guard dijalankan eksplisit sebelum commit, jadi --no-verify tidak melewati pemeriksaan.
+set -u
+[ "${SKIP_MEGAMEMORY:-}" = "1" ] && exit 0
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$ROOT" || exit 0
+DB=.megamemory/knowledge.db
+[ -f "$DB" ] || exit 0
+# Jangan pernah men-track DB yang memang sengaja untracked.
+git ls-files --error-unmatch "$DB" >/dev/null 2>&1 || exit 0
+HOOK=$(dirname "$0")
+NODE="node --no-warnings"
+
+STATE=$($NODE "$HOOK/guard.mjs" integrity "$DB" 2>/dev/null || echo bad)
+case "$STATE" in
+  ok) ;;
+  healed) echo "pre-push: WAL/SHM basi disidangkan — restart sesi bila perlu" >&2 ;;
+  *) echo "pre-push: DB tidak sehat ($STATE) — auto-commit dilewati" >&2; exit 0 ;;
+esac
+
+$NODE "$HOOK/guard.mjs" checkpoint "$DB" >/dev/null 2>&1 || true
+
+CONF=$($NODE "$HOOK/guard.mjs" conflicts "$DB" 2>/dev/null || echo 0)
+if [ "${CONF:-0}" -gt 0 ] 2>/dev/null; then
+  echo "pre-push: ✗ masih ada $CONF konflik megamemory — selesaikan dulu" >&2
+  echo "pre-push:   bypass: SKIP_MEGAMEMORY=1 git push" >&2
+  exit 1
+fi
+
+git diff --quiet -- "$DB" && exit 0
+git add "$DB"
+
+OUT=$($NODE "$HOOK/guard.mjs" 2>&1); RC=$?
+if [ "$RC" -ne 0 ]; then
+  printf '%s\n' "$OUT" >&2
+  echo "pre-push: guard menolak DB — commit dibatalkan, push dihentikan" >&2
+  git reset -- "$DB" >/dev/null 2>&1 || true
+  exit 1
+fi
+
+if git commit --no-verify -m "chore: sync megamemory [skip ci]" >/dev/null 2>&1; then
+  echo "pre-push: DB sudah di-commit — jalankan git push sekali lagi" >&2
+  exit 1
+fi
+exit 0

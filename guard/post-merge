@@ -1,0 +1,23 @@
+#!/bin/sh
+# Advisory setelah pull/merge/rebase — tidak memblokir.
+set -u
+[ "${SKIP_MEGAMEMORY:-}" = "1" ] && exit 0
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$ROOT" || exit 0
+DB=.megamemory/knowledge.db
+[ -f "$DB" ] || exit 0
+HOOK=$(dirname "$0")
+NODE="node --no-warnings"
+
+CONF=$($NODE "$HOOK/guard.mjs" conflicts "$DB" 2>/dev/null || echo 0)
+if [ "${CONF:-0}" -gt 0 ] 2>/dev/null; then
+  echo "post-merge: ⚠ ada $CONF konflik megamemory — jalankan 'megamemory conflicts'" >&2
+fi
+
+STATE=$($NODE "$HOOK/guard.mjs" integrity "$DB" 2>/dev/null || echo bad)
+case "$STATE" in
+  ok) ;;
+  healed) echo "post-merge: WAL/SHM basi disidangkan" >&2 ;;
+  *) echo "post-merge: ⚠ DB tidak sehat ($STATE) — restore dari git" >&2 ;;
+esac
+exit 0

@@ -1,0 +1,100 @@
+# megamemory-knowledge-graph
+
+Read-only graph reasoning companion for a [megamemory](https://github.com/0xK3vin/MegaMemory)
+`knowledge.db`. Exposes five MCP tools and an equivalent CLI; **never writes to SQLite**
+(all mutations belong to the megamemory MCP).
+
+Works with Python 3.10+, standard library only.
+
+## Install
+
+From a pinned git tag (available now — no clone, no venv):
+
+```bash
+uvx --from git+https://github.com/whegreen/megamemory-knowledge-graph@v0.1.0 megamemory-kg
+```
+
+From PyPI (after release):
+
+```bash
+uvx megamemory-kg@0.1.0
+```
+
+Alternatives: `pipx install megamemory-kg`, or install from a git tag:
+
+```bash
+uvx --from git+https://github.com/whegreen/megamemory-kg@v0.1.0 megamemory-kg
+```
+
+## Configure OpenCode
+
+```jsonc
+{
+  "mcp": {
+    "megamemory-knowledge-graph": {
+      "type": "local",
+      "command": ["uvx", "--from", "git+https://github.com/whegreen/megamemory-knowledge-graph@v0.1.0", "megamemory-kg"],
+      "enabled": true,
+      "environment": { "KG_INCLUDE_ROOT": "0" }
+    }
+  }
+}
+```
+
+Default database is `cwd/.megamemory/knowledge.db` — no configuration needed in a
+project that already has a graph.
+
+| Env | Purpose | Default |
+|-----|---------|---------|
+| `KG_DB_PATHS` | colon-separated DB paths (overrides discovery) | unset |
+| `KG_ROOT_DB` | optional shared DB, only read when root inclusion is requested | unset |
+| `KG_INCLUDE_ROOT` | allow root inclusion (`1`) | `0` |
+| `KG_LABEL` | source label for loaded nodes | `path.name` |
+| `KG_PROJECT` | value returned as `project` by `kg_health` | `cwd.name` |
+
+## Tools
+
+| Tool | Purpose |
+|------|---------|
+| `kg_health` | orphans, contradictions, clusters, hubs, `file_refs` coverage, `server_version` |
+| `kg_validate` | adversarial check of a claim against existing knowledge |
+| `kg_query` | `search`, `neighbors`, `path`, `hubs`, `clusters` |
+| `kg_reason` | six-step reasoning context |
+| `kg_suggest_edges` | dry-run edge suggestions (apply via megamemory MCP) |
+
+CLI equivalent:
+
+```bash
+mmkg --self-test
+mmkg --db .megamemory/knowledge.db health --text
+mmkg --db .megamemory/knowledge.db query neighbors <id> --hops 2
+python3 -m megamemory_kg.monthly_health --out docs/kg-health-2026-11.md
+```
+
+## Guard
+
+`guard/` contains the generic pre-commit guard and four hooks copied from the
+public repository's earlier fork. Config stays per project and is **never**
+published; only `guard/guard.example.json` and `guard/pii-blocklist.example.txt`
+are shipped.
+
+```bash
+sh guard/sync.sh /path/to/project
+git -C /path/to/project config core.hooksPath .githooks
+node --no-warnings /path/to/project/.githooks/guard.mjs self-test
+```
+
+## Verify a checkout
+
+```bash
+sh scripts/check_sanitization.sh   # no project-internal tokens in published files
+python3 -m unittest discover -s tests -v
+```
+
+When re-building the *same* version locally, `uvx` may reuse a cached install.
+Use `uv cache clean megamemory-kg` or install the wheel into a fresh venv when
+verifying a rebuilt artifact.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for upstream attribution.

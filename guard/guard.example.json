@@ -1,0 +1,10 @@
+{
+  "blockedTokens": [],
+  "piiFilePatterns": [],
+  "absolutePathTokens": [
+    "/users/",
+    "/home/",
+    "c:\\users\\"
+  ],
+  "detectPatterns": []
+}

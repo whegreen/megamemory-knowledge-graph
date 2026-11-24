@@ -1,0 +1,5 @@
+# Contoh daftar PII / nama anak yang diblokir oleh .githooks/pre-commit.
+# Salin ke .megamemory/pii-blocklist.txt (sengaja di-ignore git) lalu isi dengan nilai asli.
+# Satu entri per baris; baris kosong dan baris diawali '#' diabaikan; pencocokan case-insensitive.
+# Placeholder di bawah tidak akan mencocokkan data nyata — ini hanya contoh format.
+nama-anak-contoh
