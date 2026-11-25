@@ -11,19 +11,19 @@ Works with Python 3.10+, standard library only.
 From a pinned git tag (available now — no clone, no venv):
 
 ```bash
-uvx --from git+https://github.com/whegreen/megamemory-knowledge-graph@v0.1.0 megamemory-kg
+uvx --from git+https://github.com/whegreen/megamemory-knowledge-graph@v0.2.0 megamemory-knowledge-graph
 ```
 
 From PyPI (after release):
 
 ```bash
-uvx megamemory-kg@0.1.0
+uvx megamemory-knowledge-graph@0.2.0
 ```
 
-Alternatives: `pipx install megamemory-kg`, or install from a git tag:
+Alternatives: `pipx install megamemory-knowledge-graph`, or install from a git tag:
 
 ```bash
-uvx --from git+https://github.com/whegreen/megamemory-kg@v0.1.0 megamemory-kg
+uvx --from git+https://github.com/whegreen/megamemory-knowledge-graph@v0.2.0 megamemory-knowledge-graph
 ```
 
 ## Configure OpenCode
@@ -33,7 +33,7 @@ uvx --from git+https://github.com/whegreen/megamemory-kg@v0.1.0 megamemory-kg
   "mcp": {
     "megamemory-knowledge-graph": {
       "type": "local",
-      "command": ["uvx", "--from", "git+https://github.com/whegreen/megamemory-knowledge-graph@v0.1.0", "megamemory-kg"],
+      "command": ["uvx", "--from", "git+https://github.com/whegreen/megamemory-knowledge-graph@v0.2.0", "megamemory-knowledge-graph"],
       "enabled": true,
       "environment": { "KG_INCLUDE_ROOT": "0" }
     }
@@ -92,7 +92,7 @@ python3 -m unittest discover -s tests -v
 ```
 
 When re-building the *same* version locally, `uvx` may reuse a cached install.
-Use `uv cache clean megamemory-kg` or install the wheel into a fresh venv when
+Use `uv cache clean megamemory-knowledge-graph` or install the wheel into a fresh venv when
 verifying a rebuilt artifact.
 
 ## License
