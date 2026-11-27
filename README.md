@@ -71,6 +71,33 @@ mmkg --db .megamemory/knowledge.db query neighbors <id> --hops 2
 python3 -m megamemory_kg.monthly_health --out docs/kg-health-2026-11.md
 ```
 
+## Mode rules (optional)
+
+Node can be grouped into **modes** for reporting. The mode is derived from node
+IDs at read time — no schema change, no database per mode, no `KG_MODE` env var.
+Set `KG_MODE_RULES` to a JSON file (see `mode_rules.example.json`):
+
+```json
+{
+  "version": 2,
+  "default": "general",
+  "modes": {
+    "code": {"id_prefixes": ["mcp-", "kg-"], "ids": [], "file_ref_hints": ["src/"]},
+    "general": {}
+  },
+  "overrides": {}
+}
+```
+
+- Mode names are arbitrary; `default` must appear in `modes`.
+- Precedence: `overrides` → exact `ids` across modes → `id_prefixes` in
+  declaration order (first match) → `default`.
+- `file_ref_hints` is optional and only used by external audit scripts.
+- Without `KG_MODE_RULES`, behaviour is unchanged: `kg_health` has no `modes`
+  field and `kg_query mode` returns an error listing available modes.
+- CLI: `python3 -m megamemory_kg.cli --rules mode_rules.example.json health`
+  or `... query mode code`.
+
 ## Guard
 
 `guard/` contains the generic pre-commit guard and four hooks copied from the

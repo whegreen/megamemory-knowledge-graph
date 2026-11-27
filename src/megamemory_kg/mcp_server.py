@@ -11,6 +11,7 @@ Config: <project>/.opencode/opencode.json · env KG_DB_PATHS, KG_PROJECT, KG_INC
 Env:
   KG_DB_PATHS     - daftar path knowledge.db dipisah ':' (override default)
   KG_INCLUDE_ROOT - '1' untuk menyertakan root shared (default '0' = project-only)
+  KG_MODE_RULES   - path aturan mode (skema v2); tanpa ini statistik mode tidak muncul
 Cache graph diinvalidasi otomatis saat metadata knowledge.db **atau** file `-wal`/`-shm`-nya berubah — write SQLite masuk WAL lebih dulu dan mtime file `.db` tidak berubah selama writer masih membuka koneksi.
 """
 
@@ -37,12 +38,14 @@ PROTOCOL = "2024-11-05"
 TOOLS = [
     {
         "name": "kg_health",
-        "description": "Health check graph megamemory project-only (vault): orphan node, kontradiksi, cluster, hub, coverage file_refs.",
+        "description": "Health check graph megamemory project-only: orphan node, kontradiksi, cluster, hub, coverage file_refs.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "include_root": {"type": "boolean", "default": False,
-                                 "description": "Set true untuk menyertakan root shared; default project-only (vault)"}
+                                 "description": "Set true untuk menyertakan root shared; default project-only"},
+                "by_mode": {"type": "boolean", "default": True,
+                            "description": "Sertakan statistik per mode bila KG_MODE_RULES di-set"}
             },
         },
     },
@@ -66,14 +69,19 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "subcommand": {"type": "string", "enum": ["search", "neighbors", "path", "hubs", "clusters"]},
+                "subcommand": {"type": "string",
+                               "enum": ["search", "neighbors", "path", "hubs", "clusters", "mode"]},
                 "query": {"type": "string", "description": "Untuk search"},
                 "id": {"type": "string", "description": "Untuk neighbors"},
                 "from": {"type": "string", "description": "Untuk path"},
                 "to": {"type": "string", "description": "Untuk path"},
                 "hops": {"type": "integer", "default": 1},
                 "undirected": {"type": "boolean", "default": False},
-                "top": {"type": "integer", "default": 5}
+                "top": {"type": "integer", "default": 5},
+                "mode": {"type": "string",
+                         "description": "Filter mode; nama sah berasal dari KG_MODE_RULES"},
+                "limit": {"type": "integer", "default": 50, "description": "Maks node pada subcommand mode"},
+                "include_summary": {"type": "boolean", "default": False}
             },
             "required": ["subcommand"],
         },
@@ -102,6 +110,22 @@ TOOLS = [
 ]
 
 _CACHE: dict[tuple, dict] = {}
+_MODE_RULES_CACHE: dict[tuple, dict] = {}
+
+
+def _mode_rules(enabled: bool = True) -> dict | None:
+    if not enabled:
+        return None
+    p = os.environ.get("KG_MODE_RULES")
+    if not p:
+        return None
+    f = Path(p).expanduser()
+    st = f.stat()  # sengaja raise bila file hilang — lebih baik dari klasifikasi diam-diam
+    key = (str(f), st.st_mtime_ns, st.st_size)
+    if key not in _MODE_RULES_CACHE:
+        _MODE_RULES_CACHE.clear()
+        _MODE_RULES_CACHE[key] = kg.load_mode_rules(str(f))
+    return _MODE_RULES_CACHE[key]
 
 
 def _db_signature(paths: list) -> tuple:
@@ -135,7 +159,7 @@ def call_tool(name: str, args: dict) -> dict:
     try:
         if name == "kg_health":
             graph = _graph(args.get("include_root"))
-            data = kg.health(graph)
+            data = kg.health(graph, _mode_rules(args.get("by_mode", True)))
             data["project"] = os.environ.get("KG_PROJECT") or Path.cwd().name
             data["server_version"] = VERSION
             data["db_paths"] = graph["sources"]
@@ -148,7 +172,10 @@ def call_tool(name: str, args: dict) -> dict:
             sub = args.get("subcommand")
             kw = {"hops": args.get("hops", 1), "undirected": args.get("undirected", False),
                   "top": args.get("top", 5), "query": args.get("query"),
-                  "id": args.get("id"), "from": args.get("from"), "to": args.get("to")}
+                  "id": args.get("id"), "from": args.get("from"), "to": args.get("to"),
+                  "mode": args.get("mode"), "limit": args.get("limit", 50),
+                  "include_summary": args.get("include_summary", False),
+                  "mode_rules": _mode_rules()}
             data = kg.query(_graph(), sub, **kw)
         elif name == "kg_reason":
             if not args.get("question"):

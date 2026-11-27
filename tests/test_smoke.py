@@ -26,7 +26,7 @@ class SmokeTest(unittest.TestCase):
 
     def test_version(self):
         p = run([sys.executable, "-m", "megamemory_kg.cli", "--version"])
-        self.assertEqual(p.stdout.strip(), "0.2.0")
+        self.assertEqual(p.stdout.strip(), "0.3.0")
 
     def test_mcp_tools(self):
         req = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n' \

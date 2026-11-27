@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "default": "general",
+  "modes": {
+    "code": {
+      "id_prefixes": ["mcp-", "kg-", "guard-", "dec-"],
+      "ids": ["config-loader"],
+      "file_ref_hints": ["src/", "scripts/", "guard/"]
+    },
+    "ops": {
+      "id_prefixes": ["run-", "deploy-"],
+      "file_ref_hints": ["reports/", "docs/"]
+    },
+    "general": {
+      "id_prefixes": [],
+      "ids": [],
+      "file_ref_hints": ["docs/", "notes/"]
+    }
+  },
+  "overrides": {
+    "doc-special": {"mode": "code", "note": "contoh override"}
+  }
+}

@@ -9,7 +9,7 @@ Usage:
   python3 -m megamemory_kg.cli health [--db PATH] [--no-root] [--text]
   python3 -m megamemory_kg.cli validate --entity E --claim C [--source S] [--kind K]
   python3 -m megamemory_kg.cli query search Q | neighbors ID [--hops N] \\
-                                  | path A B [--undirected] | hubs [--top N] | clusters
+                                  | path A B [--undirected] | hubs [--top N] | clusters | mode [MODE]
   python3 -m megamemory_kg.cli reason "pertanyaan"
   python3 -m megamemory_kg.cli suggest-edges [--limit N]
   python3 -m megamemory_kg.cli export [--out FILE]
@@ -204,7 +204,90 @@ def idx_nodes_edges(idx: dict):
                 yield a, b
 
 
-def health(graph: dict) -> dict:
+# --------------------------------------------------------------------------- #
+# Mode rules (opsional) — nama mode berasal dari file aturan, bukan dari kode
+# --------------------------------------------------------------------------- #
+
+def load_mode_rules(path: str | None = None) -> dict | None:
+    """Muat aturan mode dari argumen atau env KG_MODE_RULES. None = mode mati.
+
+    Skema v2: {"version": 2, "default": <nama>, "modes": {<nama>: {...}},
+    "overrides": {...}}. File contoh: mode_rules.example.json.
+    """
+    p = path or os.environ.get("KG_MODE_RULES")
+    if not p:
+        return None
+    f = Path(p).expanduser()
+    if not f.exists():
+        raise FileNotFoundError(f"KG_MODE_RULES tidak ditemukan: {f}")
+    data = json.loads(f.read_text(encoding="utf-8"))
+    for key in ("version", "default", "modes"):
+        if key not in data:
+            raise ValueError(f"mode_rules kehilangan field: {key}")
+    if data["version"] != 2:
+        raise ValueError(f"mode_rules versi {data['version']} tidak didukung (butuh 2)")
+    modes = data["modes"]
+    if not isinstance(modes, dict) or not modes:
+        raise ValueError("mode_rules.modes harus berisi minimal satu mode")
+    if data["default"] not in modes:
+        raise ValueError(f"mode default {data['default']!r} tidak ada di modes")
+    for name, spec in modes.items():
+        if not isinstance(spec, dict):
+            raise ValueError(f"mode {name!r} harus berupa objek")
+        for field in ("ids", "id_prefixes"):
+            if field in spec and not isinstance(spec[field], list):
+                raise ValueError(f"mode {name!r}.{field} harus berupa list")
+    data.setdefault("overrides", {})
+    return data
+
+
+def classify_mode(node: dict, rules: dict) -> tuple[str, str]:
+    """Return (mode, reason). Precedence: override > id > prefix > default.
+
+    Exact id dicek lintas mode dulu, lalu prefix sesuai urutan deklarasi di
+    `modes` (first match menang).
+    """
+    nid = node.get("id", "")
+    override = rules["overrides"].get(nid)
+    if override:
+        mode = override.get("mode") if isinstance(override, dict) else override
+        return mode, "override"
+    for name, spec in rules["modes"].items():
+        if nid in spec.get("ids", []):
+            return name, "id"
+    for name, spec in rules["modes"].items():
+        if nid.startswith(tuple(spec.get("id_prefixes", []))):
+            return name, "prefix"
+    return rules["default"], "default"
+
+
+def mode_stats(idx: dict, edges: list[dict], rules: dict) -> dict:
+    """Statistik per mode; cross_edges sengaja dihitung di kedua mode."""
+    buckets: dict[str, set[str]] = defaultdict(set)
+    for n in idx["nodes"]:
+        mode, _ = classify_mode(n, rules)
+        buckets[mode].add(n["id"])
+    connected = {x for e in edges for x in (e.get("from_id"), e.get("to_id"))}
+    out = {}
+    for mode, ids in buckets.items():
+        intra = sum(1 for e in edges
+                    if e.get("from_id") in ids and e.get("to_id") in ids)
+        cross = sum(1 for e in edges
+                    if (e.get("from_id") in ids) != (e.get("to_id") in ids))
+        with_refs = sum(1 for n in idx["nodes"]
+                        if n["id"] in ids and n.get("file_refs") not in (None, "", "null", "[]"))
+        out[mode] = {
+            "node_count": len(ids),
+            "edge_count": intra + cross,
+            "intra_edges": intra,
+            "cross_edges": cross,
+            "orphan_count": sum(1 for i in ids if i not in connected),
+            "file_refs_coverage": round(with_refs / len(ids), 3) if ids else 0.0,
+        }
+    return out
+
+
+def health(graph: dict, mode_rules: dict | None = None) -> dict:
     idx = index_graph(graph)
     nodes, edges = idx["nodes"], graph["edges"]
     n, e = len(nodes), len(edges)
@@ -237,7 +320,7 @@ def health(graph: dict) -> dict:
         verdict_reasons.append("orphan %.0f%% > 50%%" % (orphan_ratio * 100))
     if coverage < 0.6:
         verdict_reasons.append("file_refs coverage %.3f < 0,6" % coverage)
-    return {
+    result = {
         "sources": graph["sources"],
         "node_count": n,
         "edge_count": e,
@@ -263,6 +346,9 @@ def health(graph: dict) -> dict:
         "per_source": dict(per_source),
         "verdict": "GOOD" if not verdict_reasons else "NEEDS_ATTENTION",
     }
+    if mode_rules:
+        result["modes"] = mode_stats(idx, edges, mode_rules)
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -395,10 +481,36 @@ def validate(graph: dict, entity: str, claim: str, source: str | None = None,
 
 def query(graph: dict, sub: str, **kw) -> dict:
     idx = index_graph(graph)
+    rules = kw.get("mode_rules")
+    if sub == "mode":
+        if not rules:
+            return {"error": "KG_MODE_RULES tidak di-set"}
+        wanted = kw.get("mode") or rules["default"]
+        names = set(rules["modes"])
+        if wanted not in names:
+            return {"error": f"mode tidak dikenali: {wanted}", "tersedia": sorted(names)}
+        limit = int(kw.get("limit", 50))
+        items = []
+        for n in idx["nodes"]:
+            mode, reason = classify_mode(n, rules)
+            if mode != wanted:
+                continue
+            item = {"id": n["id"], "name": n.get("name"),
+                    "kind": n.get("kind"), "reason": reason}
+            if kw.get("include_summary"):
+                item["summary"] = n.get("summary")
+            items.append(item)
+        stats = mode_stats(idx, graph["edges"], rules).get(wanted, {})
+        return {"mode": wanted, **stats,
+                "nodes": items[:limit], "truncated": len(items) > limit}
     if sub == "search":
         q = (kw.get("query") or "").lower()
         hits = [n for n in idx["nodes"]
                 if q in (n.get("id", "") + " " + n.get("name", "") + " " + n.get("summary", "")).lower()]
+        if kw.get("mode"):
+            if not rules:
+                return {"error": "KG_MODE_RULES tidak di-set"}
+            hits = [n for n in hits if classify_mode(n, rules)[0] == kw["mode"]]
         limit = int(kw.get("limit", 10))
         return {"count": len(hits), "results": [{k: h.get(k) for k in
                 ("id", "name", "kind", "summary", "source")} for h in hits[:limit]]}
@@ -616,6 +728,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--db", action="append", default=None, help="path knowledge.db (bisa diulang)")
     ap.add_argument("--no-root", action="store_true", help="jangan baca root shared")
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--rules", help="path mode_rules.json (atau set KG_MODE_RULES)")
     sub = ap.add_subparsers(dest="cmd")
 
     p_h = sub.add_parser("health"); p_h.add_argument("--text", action="store_true")
@@ -623,9 +736,11 @@ def main(argv: list[str] | None = None) -> int:
     p_v.add_argument("--entity", required=True); p_v.add_argument("--claim", required=True)
     p_v.add_argument("--source"); p_v.add_argument("--kind"); p_v.add_argument("--text", action="store_true")
     p_q = sub.add_parser("query")
-    p_q.add_argument("sub", choices=["search", "neighbors", "path", "hubs", "clusters"])
+    p_q.add_argument("sub", choices=["search", "neighbors", "path", "hubs", "clusters", "mode"])
     p_q.add_argument("args", nargs="*"); p_q.add_argument("--hops", type=int, default=1)
     p_q.add_argument("--undirected", action="store_true"); p_q.add_argument("--top", type=int, default=5)
+    p_q.add_argument("--mode"); p_q.add_argument("--limit", type=int, default=50)
+    p_q.add_argument("--include-summary", action="store_true")
     p_q.add_argument("--text", action="store_true")
     p_r = sub.add_parser("reason"); p_r.add_argument("question"); p_r.add_argument("--text", action="store_true")
     p_s = sub.add_parser("suggest-edges"); p_s.add_argument("--limit", type=int, default=25)
@@ -637,18 +752,23 @@ def main(argv: list[str] | None = None) -> int:
         self_test()
         return 0
     paths = [Path(x).expanduser() for x in a.db] if a.db is not None else default_db_paths(not a.no_root)
+    rules = load_mode_rules(a.rules)
     graph = load_graph(paths)
     if not graph["nodes"]:
         _emit({"error": "tidak ada knowledge.db yang terbaca", "paths": [str(p) for p in paths]})
         return 1
     if a.cmd == "health":
-        _emit(health(graph), a.text)
+        _emit(health(graph, rules), a.text)
     elif a.cmd == "validate":
         _emit(validate(graph, a.entity, a.claim, a.source, a.kind), a.text)
     elif a.cmd == "query":
-        kw = {"hops": a.hops, "undirected": a.undirected, "top": a.top}
+        kw = {"hops": a.hops, "undirected": a.undirected, "top": a.top,
+              "mode": a.mode, "mode_rules": rules, "limit": a.limit,
+              "include_summary": a.include_summary}
         if a.sub == "search":
             kw["query"] = " ".join(a.args)
+        elif a.sub == "mode":
+            kw["mode"] = a.args[0] if a.args else a.mode
         elif a.sub == "neighbors":
             kw["id"] = a.args[0] if a.args else None
         elif a.sub == "path":
