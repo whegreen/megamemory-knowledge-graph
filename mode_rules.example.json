@@ -1,23 +1,34 @@
 {
-  "version": 2,
+  "version": 3,
   "default": "general",
   "modes": {
     "code": {
       "id_prefixes": ["mcp-", "kg-", "guard-", "dec-"],
       "ids": ["config-loader"],
-      "file_ref_hints": ["src/", "scripts/", "guard/"]
+      "ref_prefixes": ["src/", "scripts/", "guard/"],
+      "file_ref_hints": ["src/", "scripts/", "guard/"],
+      "thresholds": {
+        "file_refs_coverage_min": 0.6,
+        "orphan_ratio_max": 0.5
+      }
     },
     "ops": {
       "id_prefixes": ["run-", "deploy-"],
+      "ref_prefixes": ["reports/"],
       "file_ref_hints": ["reports/", "docs/"]
     },
     "general": {
       "id_prefixes": [],
       "ids": [],
-      "file_ref_hints": ["docs/", "notes/"]
+      "file_ref_hints": ["docs/", "notes/"],
+      "thresholds": {
+        "file_refs_coverage_min": 0.75,
+        "orphan_ratio_max": 0.2
+      }
     }
   },
   "overrides": {
     "doc-special": {"mode": "code", "note": "contoh override"}
-  }
+  },
+  "typed_edge_prefixes": ["supersedes", "refines", "applies_to"]
 }

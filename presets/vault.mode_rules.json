@@ -1,0 +1,38 @@
+{
+  "version": 3,
+  "default": "km",
+  "modes": {
+    "coding": {
+      "id_prefixes": [
+        "mcp-", "opencode-mcp-", "kg-", "dec-kg-", "guard-",
+        "gen-fact-", "gen-coherence-", "deployment-", "r2-",
+        "cline-", "skillx-"
+      ],
+      "ref_prefixes": [
+        "src/", "mcp/", "ops/", "guard/", "scripts/", "tools/",
+        ".opencode/skills/", ".github/workflows/"
+      ],
+      "file_ref_hints": [
+        "src/", "mcp/", "ops/", "guard/", "scripts/", "tools/",
+        ".opencode/skills/", ".github/workflows/"
+      ],
+      "thresholds": {
+        "file_refs_coverage_min": 0.6,
+        "orphan_ratio_max": 0.5
+      }
+    },
+    "km": {
+      "id_prefixes": [],
+      "ids": [],
+      "file_ref_hints": [
+        "library/", "docs/", "analytic/", "insights/", "output/", "reports/"
+      ],
+      "thresholds": {
+        "file_refs_coverage_min": 0.75,
+        "orphan_ratio_max": 0.2
+      }
+    }
+  },
+  "overrides": {},
+  "typed_edge_prefixes": ["supersedes", "refines", "applies_to"]
+}

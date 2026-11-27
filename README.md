@@ -11,7 +11,7 @@ Works with Python 3.10+, standard library only.
 From a pinned git tag (available now — no clone, no venv):
 
 ```bash
-uvx --from git+https://github.com/whegreen/megamemory-knowledge-graph@v0.2.0 megamemory-knowledge-graph
+uvx --from git+https://github.com/whegreen/megamemory-knowledge-graph@v0.4.0 megamemory-knowledge-graph
 ```
 
 From PyPI (after release):
@@ -23,7 +23,7 @@ uvx megamemory-knowledge-graph@0.2.0
 Alternatives: `pipx install megamemory-knowledge-graph`, or install from a git tag:
 
 ```bash
-uvx --from git+https://github.com/whegreen/megamemory-knowledge-graph@v0.2.0 megamemory-knowledge-graph
+uvx --from git+https://github.com/whegreen/megamemory-knowledge-graph@v0.4.0 megamemory-knowledge-graph
 ```
 
 ## Configure OpenCode
@@ -33,7 +33,7 @@ uvx --from git+https://github.com/whegreen/megamemory-knowledge-graph@v0.2.0 meg
   "mcp": {
     "megamemory-knowledge-graph": {
       "type": "local",
-      "command": ["uvx", "--from", "git+https://github.com/whegreen/megamemory-knowledge-graph@v0.2.0", "megamemory-knowledge-graph"],
+      "command": ["uvx", "--from", "git+https://github.com/whegreen/megamemory-knowledge-graph@v0.4.0", "megamemory-knowledge-graph"],
       "enabled": true,
       "environment": { "KG_INCLUDE_ROOT": "0" }
     }
@@ -51,6 +51,7 @@ project that already has a graph.
 | `KG_INCLUDE_ROOT` | allow root inclusion (`1`) | `0` |
 | `KG_LABEL` | source label for loaded nodes | `path.name` |
 | `KG_PROJECT` | value returned as `project` by `kg_health` | `cwd.name` |
+| `KG_MODE_RULES` | path to a mode-rules JSON file (schema v2/v3) | unset |
 
 ## Tools
 
@@ -58,7 +59,7 @@ project that already has a graph.
 |------|---------|
 | `kg_health` | orphans, contradictions, clusters, hubs, `file_refs` coverage, `server_version` |
 | `kg_validate` | adversarial check of a claim against existing knowledge |
-| `kg_query` | `search`, `neighbors`, `path`, `hubs`, `clusters` |
+| `kg_query` | `search`, `neighbors`, `path`, `hubs`, `clusters`, `mode` |
 | `kg_reason` | six-step reasoning context |
 | `kg_suggest_edges` | dry-run edge suggestions (apply via megamemory MCP) |
 
@@ -68,35 +69,52 @@ CLI equivalent:
 mmkg --self-test
 mmkg --db .megamemory/knowledge.db health --text
 mmkg --db .megamemory/knowledge.db query neighbors <id> --hops 2
-python3 -m megamemory_kg.monthly_health --out docs/kg-health-2026-11.md
+mmkg modes --check --rules .opencode/kg/mode_rules.json
+mmkg monthly --out docs/kg-health-2026-11.md
 ```
 
 ## Mode rules (optional)
 
-Node can be grouped into **modes** for reporting. The mode is derived from node
-IDs at read time — no schema change, no database per mode, no `KG_MODE` env var.
-Set `KG_MODE_RULES` to a JSON file (see `mode_rules.example.json`):
+Node can be grouped into **modes** for reporting. The mode is derived at read
+time from node IDs, `file_refs`, and DB source label — no schema change, no
+database per mode, no `KG_MODE` env var. Set `KG_MODE_RULES` to a JSON file
+(see `mode_rules.example.json` and the per-repo templates in `presets/`):
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "default": "general",
   "modes": {
-    "code": {"id_prefixes": ["mcp-", "kg-"], "ids": [], "file_ref_hints": ["src/"]},
-    "general": {}
+    "code": {"id_prefixes": ["mcp-", "kg-"], "ref_prefixes": ["src/"]},
+    "general": {"thresholds": {"file_refs_coverage_min": 0.75,
+                                "orphan_ratio_max": 0.2}}
   },
-  "overrides": {}
+  "overrides": {},
+  "typed_edge_prefixes": ["supersedes", "refines", "applies_to"]
 }
 ```
 
+- Schema **v2** is still accepted; v3 adds `ref_prefixes`, `source_labels`,
+  per-mode `thresholds`, and top-level `typed_edge_prefixes`.
 - Mode names are arbitrary; `default` must appear in `modes`.
-- Precedence: `overrides` → exact `ids` across modes → `id_prefixes` in
-  declaration order (first match) → `default`.
-- `file_ref_hints` is optional and only used by external audit scripts.
+- Precedence: `overrides` → exact `ids` across modes → `id_prefixes` →
+  `ref_prefixes` → `source_labels` → `default`. Each level follows declaration
+  order (first match wins); `file_ref_hints` is **audit-only**, used by
+  `mmkg modes --check`.
+- `thresholds` add per-mode verdict reasons such as
+  `general.file_refs coverage 0.488 < 0,75`; modes with zero nodes are skipped.
+- `typed_edge_prefixes` recognises typed `connects_to` edges whose description
+  starts with one of the prefixes, feeding `typed_edge_share`.
+- With multiple DBs sharing a basename, labels fall back to parent directory
+  names, so root index-only reads show one `per_source` entry per project.
+  Do not set `KG_LABEL` in that case.
 - Without `KG_MODE_RULES`, behaviour is unchanged: `kg_health` has no `modes`
   field and `kg_query mode` returns an error listing available modes.
-- CLI: `python3 -m megamemory_kg.cli --rules mode_rules.example.json health`
-  or `... query mode code`.
+- CLI: `mmkg modes --check --suggest --rules FILE`, `mmkg monthly --rules FILE`,
+  or `mmkg query mode general --limit 10`.
+- `presets/` contains templates for three repo shapes: vault (git, coding +
+  knowledge), project (git, coding + knowledge from DB values), and root
+  (no git, multi-project index).
 
 ## Guard
 

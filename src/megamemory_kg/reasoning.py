@@ -78,18 +78,30 @@ def default_db_paths(include_root: bool = False) -> list[Path]:
     return [p for p in paths if p.exists()]
 
 
-def _label(path: Path) -> str:
+def source_labels(paths: list[Path]) -> list[str]:
+    """Label sumber unik. Multi-DB dengan basename sama memakai nama parent.
+
+    KG_LABEL meng-override semua; KG_ROOT_DB menandai DB root sebagai 'root'.
+    """
     override = os.environ.get("KG_LABEL")
     if override:
-        return override
+        return [override] * len(paths)
+    names = [p.name for p in paths]
+    dupes = {n for n in names if names.count(n) > 1}
+    labels = [p.parent.name if p.name in dupes else p.name for p in paths]
     root = os.environ.get("KG_ROOT_DB")
     if root:
         try:
-            if path.expanduser().resolve() == Path(root).expanduser().resolve():
-                return "root"
+            rp = Path(root).expanduser().resolve()
+            labels = ["root" if p.expanduser().resolve() == rp else lab
+                      for p, lab in zip(paths, labels)]
         except OSError:
             pass
-    return path.name
+    return labels
+
+
+def _label(path: Path) -> str:
+    return source_labels([path])[0]
 
 
 def _collect(con: sqlite3.Connection, label: str, nodes: list, edges: list) -> None:
@@ -118,14 +130,15 @@ def load_graph(paths: list[Path] | None = None, include_root: bool = True) -> di
     nodes: list[dict] = []
     edges: list[dict] = []
     used: list[str] = []
-    for p in paths:
+    labels = source_labels(paths)
+    for p, label in zip(paths, labels):
         if not p.exists():
             continue
         src = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
         snap = sqlite3.connect(":memory:")
         try:
             src.backup(snap)          # konsisten terhadap WAL, tanpa menyentuh file asli
-            _collect(snap, _label(p), nodes, edges)
+            _collect(snap, label, nodes, edges)
             used.append(str(p))
         finally:
             snap.close()
@@ -211,8 +224,9 @@ def idx_nodes_edges(idx: dict):
 def load_mode_rules(path: str | None = None) -> dict | None:
     """Muat aturan mode dari argumen atau env KG_MODE_RULES. None = mode mati.
 
-    Skema v2: {"version": 2, "default": <nama>, "modes": {<nama>: {...}},
-    "overrides": {...}}. File contoh: mode_rules.example.json.
+    Skema v2/v3: {"version": 2|3, "default": <nama>, "modes": {<nama>: {...}},
+    "overrides": {...}}. v3 menambah ref_prefixes, source_labels, thresholds,
+    dan typed_edge_prefixes. File contoh: mode_rules.example.json.
     """
     p = path or os.environ.get("KG_MODE_RULES")
     if not p:
@@ -224,8 +238,8 @@ def load_mode_rules(path: str | None = None) -> dict | None:
     for key in ("version", "default", "modes"):
         if key not in data:
             raise ValueError(f"mode_rules kehilangan field: {key}")
-    if data["version"] != 2:
-        raise ValueError(f"mode_rules versi {data['version']} tidak didukung (butuh 2)")
+    if data["version"] not in (2, 3):
+        raise ValueError(f"mode_rules versi {data['version']} tidak didukung (butuh 2 atau 3)")
     modes = data["modes"]
     if not isinstance(modes, dict) or not modes:
         raise ValueError("mode_rules.modes harus berisi minimal satu mode")
@@ -234,21 +248,47 @@ def load_mode_rules(path: str | None = None) -> dict | None:
     for name, spec in modes.items():
         if not isinstance(spec, dict):
             raise ValueError(f"mode {name!r} harus berupa objek")
-        for field in ("ids", "id_prefixes"):
+        for field in ("ids", "id_prefixes", "ref_prefixes", "source_labels"):
             if field in spec and not isinstance(spec[field], list):
                 raise ValueError(f"mode {name!r}.{field} harus berupa list")
+        if "thresholds" in spec:
+            th = spec["thresholds"]
+            if not isinstance(th, dict):
+                raise ValueError(f"mode {name!r}.thresholds harus berupa objek")
+            for key in ("file_refs_coverage_min", "orphan_ratio_max"):
+                if key in th and not isinstance(th[key], (int, float)):
+                    raise ValueError(f"mode {name!r}.thresholds.{key} harus angka")
     data.setdefault("overrides", {})
+    for nid, ov in data["overrides"].items():
+        mode = ov.get("mode") if isinstance(ov, dict) else ov
+        if mode not in modes:
+            raise ValueError(f"overrides.{nid} memilih mode tak dikenal: {mode}")
+    if "typed_edge_prefixes" in data and not isinstance(data["typed_edge_prefixes"], list):
+        raise ValueError("typed_edge_prefixes harus berupa list")
     return data
 
 
-def classify_mode(node: dict, rules: dict) -> tuple[str, str]:
-    """Return (mode, reason). Precedence: override > id > prefix > default.
+def _node_refs(node: dict) -> list[str]:
+    raw = node.get("file_refs")
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return []
+    return [str(x) for x in value] if isinstance(value, list) else []
 
-    Exact id dicek lintas mode dulu, lalu prefix sesuai urutan deklarasi di
-    `modes` (first match menang).
+
+def classify_mode(node: dict, rules: dict) -> tuple[str, str]:
+    """Return (mode, reason).
+
+    Precedence: override > exact id > id_prefixes > ref_prefixes >
+    source_labels > default. Tiap tingkat memakai urutan deklarasi `modes`
+    (first match menang). `file_ref_hints` tidak dipakai di sini — itu hanya
+    untuk audit (mmkg modes --check).
     """
     nid = node.get("id", "")
-    override = rules["overrides"].get(nid)
+    override = (rules.get("overrides") or {}).get(nid)
     if override:
         mode = override.get("mode") if isinstance(override, dict) else override
         return mode, "override"
@@ -258,17 +298,32 @@ def classify_mode(node: dict, rules: dict) -> tuple[str, str]:
     for name, spec in rules["modes"].items():
         if nid.startswith(tuple(spec.get("id_prefixes", []))):
             return name, "prefix"
+    refs = _node_refs(node)
+    for name, spec in rules["modes"].items():
+        prefixes = tuple(spec.get("ref_prefixes", []))
+        if prefixes and any(r.startswith(prefixes) for r in refs):
+            return name, "ref"
+    for name, spec in rules["modes"].items():
+        if node.get("source") in spec.get("source_labels", []):
+            return name, "source"
     return rules["default"], "default"
 
 
 def mode_stats(idx: dict, edges: list[dict], rules: dict) -> dict:
-    """Statistik per mode; cross_edges sengaja dihitung di kedua mode."""
+    """Statistik per mode; cross_edges sengaja dihitung di kedua mode.
+
+    Mode yang dideklarasikan tapi belum punya node tetap muncul dengan count 0.
+    """
     buckets: dict[str, set[str]] = defaultdict(set)
     for n in idx["nodes"]:
         mode, _ = classify_mode(n, rules)
         buckets[mode].add(n["id"])
     connected = {x for e in edges for x in (e.get("from_id"), e.get("to_id"))}
-    out = {}
+    out: dict[str, dict] = {
+        name: {"node_count": 0, "edge_count": 0, "intra_edges": 0,
+               "cross_edges": 0, "orphan_count": 0, "file_refs_coverage": 0.0}
+        for name in rules["modes"]
+    }
     for mode, ids in buckets.items():
         intra = sum(1 for e in edges
                     if e.get("from_id") in ids and e.get("to_id") in ids)
@@ -313,6 +368,10 @@ def health(graph: dict, mode_rules: dict | None = None) -> dict:
         per_source[edge.get("source")]["edges"] += 1
     orphan_ratio = round(len(orphans) / n, 3) if n else 0.0
     coverage = round(with_refs / n, 3) if n else 0.0
+    typed_prefixes = tuple(str(p) for p in
+                           ((mode_rules or {}).get("typed_edge_prefixes") or []))
+    typed_re = (re.compile(r"^(?:" + "|".join(re.escape(p) for p in typed_prefixes)
+                           + r")\b", re.I) if typed_prefixes else None)
     verdict_reasons = []
     if contradictions:
         verdict_reasons.append("kontradiksi terbuka: %d" % len(contradictions))
@@ -341,13 +400,36 @@ def health(graph: dict, mode_rules: dict | None = None) -> dict:
         "relation_distribution": dict(sorted(
             defaultdict(int, {r: sum(1 for x in edges if x.get("relation") == r)
                               for r in {x.get("relation") for x in edges}}).items())),
+        "typed_edge_share": round(sum(
+            1 for x in edges
+            if x.get("relation") != "connects_to"
+            or (typed_re and typed_re.match(x.get("description") or ""))
+        ) / e, 3) if e else 0.0,
         "density": round(e / (n * (n - 1)), 4) if n > 1 else 0.0,
         "avg_connectivity": round(2 * e / n, 2) if n else 0.0,
         "per_source": dict(per_source),
         "verdict": "GOOD" if not verdict_reasons else "NEEDS_ATTENTION",
     }
     if mode_rules:
-        result["modes"] = mode_stats(idx, edges, mode_rules)
+        modes = mode_stats(idx, edges, mode_rules)
+        result["modes"] = modes
+        for name, spec in mode_rules["modes"].items():
+            m = modes.get(name)
+            th = spec.get("thresholds") or {}
+            if not m or not m["node_count"]:
+                continue
+            cov_min = th.get("file_refs_coverage_min")
+            if cov_min is not None and m["file_refs_coverage"] < cov_min:
+                result["verdict_reasons"].append(
+                    f"{name}.file_refs coverage {m['file_refs_coverage']:.3f} < "
+                    f"{str(cov_min).replace('.', ',')}")
+            orphan_max = th.get("orphan_ratio_max")
+            if orphan_max is not None:
+                ratio = m["orphan_count"] / m["node_count"]
+                if ratio > orphan_max:
+                    result["verdict_reasons"].append(
+                        f"{name}.orphan {ratio:.0%} > {orphan_max:.0%}")
+        result["verdict"] = "GOOD" if not result["verdict_reasons"] else "NEEDS_ATTENTION"
     return result
 
 

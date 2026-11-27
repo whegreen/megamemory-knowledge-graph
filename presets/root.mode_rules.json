@@ -1,0 +1,21 @@
+{
+  "version": 3,
+  "default": "index",
+  "modes": {
+    "tool": {
+      "id_prefixes": ["deploy-", "kg-", "guard-", "mcp-", "opencode-"],
+      "ref_prefixes": ["guard/", "scripts/", "ops/"],
+      "file_ref_hints": ["guard/", "docs/"],
+      "thresholds": {
+        "file_refs_coverage_min": 0.6,
+        "orphan_ratio_max": 0.5
+      }
+    },
+    "index": {
+      "id_prefixes": [],
+      "file_ref_hints": ["docs/", "notes/"]
+    }
+  },
+  "overrides": {},
+  "typed_edge_prefixes": ["supersedes", "refines", "applies_to"]
+}

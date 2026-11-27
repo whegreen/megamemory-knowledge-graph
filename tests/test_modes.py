@@ -1,7 +1,8 @@
-"""Test untuk dimensi mode generik (skema v2) di megamemory_kg.reasoning."""
+"""Test untuk dimensi mode generik (skema v2/v3) di megamemory_kg.reasoning."""
 
 from __future__ import annotations
 
+import copy
 import json
 import sqlite3
 import sys
@@ -104,7 +105,116 @@ class ModeTest(unittest.TestCase):
         example = ROOT / "mode_rules.example.json"
         rules = kg.load_mode_rules(str(example))
         self.assertIn(rules["default"], rules["modes"])
-        self.assertEqual(rules["version"], 2)
+        self.assertIn(rules["version"], (2, 3))
+
+    def test_ref_and_source_classification(self):
+        rules = {
+            "version": 3,
+            "default": "general",
+            "modes": {
+                "notes": {"ref_prefixes": ["docs/", "notes/"]},
+                "remotes": {"source_labels": ["other-db"]},
+                "general": {},
+            },
+            "overrides": {},
+        }
+        self.assertEqual(
+            kg.classify_mode({"id": "x", "file_refs": '["docs/a.md"]',
+                              "source": "knowledge.db"}, rules), ("notes", "ref"))
+        self.assertEqual(
+            kg.classify_mode({"id": "y", "file_refs": None,
+                              "source": "other-db"}, rules), ("remotes", "source"))
+        self.assertEqual(
+            kg.classify_mode({"id": "z", "file_refs": None,
+                              "source": "knowledge.db"}, rules), ("general", "default"))
+
+    def test_thresholds_are_mode_name_agnostic(self):
+        rules = {
+            "version": 3,
+            "default": "general",
+            "modes": {"general": {"thresholds": {"file_refs_coverage_min": 0.75,
+                                                 "orphan_ratio_max": 0.2}}},
+            "overrides": {},
+        }
+        good = kg.health(self.graph, rules)
+        self.assertEqual(good["verdict"], "GOOD")
+        bad = copy.deepcopy(self.graph)
+        for node in bad["nodes"]:
+            node["file_refs"] = None
+        bad["edges"] = []
+        out = kg.health(bad, rules)
+        self.assertEqual(out["verdict"], "NEEDS_ATTENTION")
+        self.assertTrue(any(r.startswith("general.file_refs coverage")
+                            for r in out["verdict_reasons"]))
+        self.assertTrue(any(r.startswith("general.orphan")
+                            for r in out["verdict_reasons"]))
+
+    def test_declared_mode_without_nodes_is_visible(self):
+        rules = {"version": 3, "default": "general",
+                 "modes": {"general": {}, "future": {}}, "overrides": {}}
+        out = kg.health(self.graph, rules)
+        self.assertIn("future", out["modes"])
+        self.assertEqual(out["modes"]["future"]["node_count"], 0)
+
+    def test_typed_edge_share_with_configurable_prefixes(self):
+        graph = {
+            "nodes": [
+                {"id": "a", "name": "A", "kind": "decision", "summary": "s",
+                 "file_refs": "[]", "source": "x"},
+                {"id": "b", "name": "B", "kind": "feature", "summary": "s",
+                 "file_refs": "[]", "source": "x"},
+                {"id": "c", "name": "C", "kind": "feature", "summary": "s",
+                 "file_refs": "[]", "source": "x"},
+            ],
+            "edges": [
+                {"from_id": "a", "to_id": "b", "relation": "implements", "description": ""},
+                {"from_id": "b", "to_id": "c", "relation": "connects_to",
+                 "description": "supersedes v1"},
+                {"from_id": "a", "to_id": "c", "relation": "connects_to", "description": ""},
+            ],
+            "sources": ["x"],
+        }
+        rules = {"version": 3, "default": "general", "modes": {"general": {}},
+                 "overrides": {}, "typed_edge_prefixes": ["supersedes", "refines"]}
+        self.assertEqual(kg.health(graph, rules)["typed_edge_share"], 0.667)
+        self.assertEqual(kg.health(graph)["typed_edge_share"], 0.333)
+
+    def test_source_labels_unique_for_multi_db(self):
+        with tempfile.TemporaryDirectory() as d:
+            paths = []
+            for name in ("alpha", "beta"):
+                folder = Path(d) / name
+                folder.mkdir()
+                db = folder / "knowledge.db"
+                con = sqlite3.connect(db)
+                con.executescript(
+                    "CREATE TABLE nodes(id TEXT PRIMARY KEY, name TEXT, kind TEXT, "
+                    "summary TEXT, file_refs TEXT);"
+                    "CREATE TABLE edges(from_id TEXT, to_id TEXT, relation TEXT);"
+                )
+                con.execute("INSERT INTO nodes VALUES(?,?,?,?,?)",
+                            (name, name, "decision", "s", "[]"))
+                con.commit()
+                con.close()
+                paths.append(db)
+            graph = kg.load_graph(paths)
+            self.assertEqual(sorted({n["source"] for n in graph["nodes"]}),
+                             ["alpha", "beta"])
+
+    def test_validation_of_v3_fields(self):
+        bad = copy.deepcopy(RULES)
+        bad["version"] = 3
+        bad["overrides"] = {"x": {"mode": "nope"}}
+        p = self.rules_path.with_name("bad-override.json")
+        p.write_text(json.dumps(bad), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            kg.load_mode_rules(str(p))
+        bad = copy.deepcopy(RULES)
+        bad["version"] = 3
+        bad["modes"]["code"]["thresholds"] = {"orphan_ratio_max": "x"}
+        p.write_text(json.dumps(bad), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            kg.load_mode_rules(str(p))
 
     def test_without_rules(self):
         self.assertIn("error", kg.query(self.graph, "mode"))

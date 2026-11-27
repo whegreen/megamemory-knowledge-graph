@@ -1,0 +1,30 @@
+{
+  "version": 3,
+  "default": "coding",
+  "modes": {
+    "coding": {
+      "id_prefixes": [],
+      "ref_prefixes": [
+        "src/", "app/", "scripts/", "tests/", "supabase/functions/"
+      ],
+      "file_ref_hints": ["src/", "app/", "scripts/", "supabase/"],
+      "thresholds": {
+        "file_refs_coverage_min": 0.6,
+        "orphan_ratio_max": 0.5
+      }
+    },
+    "knowledge": {
+      "id_prefixes": [],
+      "ref_prefixes": [
+        "docs/", "library/", "notes/", "AGENTS.md", "table_name:"
+      ],
+      "file_ref_hints": ["docs/", "library/", "notes/", "table_name:"],
+      "thresholds": {
+        "file_refs_coverage_min": 0.75,
+        "orphan_ratio_max": 0.2
+      }
+    }
+  },
+  "overrides": {},
+  "typed_edge_prefixes": ["supersedes", "refines", "applies_to"]
+}

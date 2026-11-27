@@ -5,7 +5,7 @@ Stdlib only, READ-ONLY terhadap knowledge.db. Ditemani automation cron bulanan.
 Output sengaja tidak di-commit otomatis — user me-review dulu.
 
 Usage:
-  python3 -m megamemory_kg.monthly_health [--db PATH] [--out PATH] [--days N]
+  mmkg monthly [--db PATH] [--rules PATH] [--out PATH]
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ except ImportError:  # eksekusi langsung sebagai script
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Ringkasan kg_health bulanan")
     ap.add_argument("--db", action="append", default=None, help="path knowledge.db (bisa diulang)")
+    ap.add_argument("--rules", default=None, help="path mode_rules.json (atau KG_MODE_RULES)")
     ap.add_argument("--out", default=None, help="file output; default docs/kg-health-YYYY-MM.md")
     a = ap.parse_args(argv)
 
@@ -34,7 +35,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     now = datetime.now(timezone(timedelta(hours=7)))  # Asia/Jakarta
-    h = kg.health(kg.load_graph(paths))
+    rules = kg.load_mode_rules(a.rules)
+    h = kg.health(kg.load_graph(paths), rules)
     path = Path(a.out) if a.out else Path("docs") / f"kg-health-{now:%Y-%m}.md"
 
     lines = [
@@ -54,10 +56,17 @@ def main(argv: list[str] | None = None) -> int:
         f"| `file_refs` coverage | {h['file_refs_coverage']} |",
         f"| Verdict | {h['verdict']} |",
         f"| Orphan ratio | {h['orphan_ratio']} |",
-        "",
-        "## Alasan verdict",
+        f"| Typed edge share | {h['typed_edge_share']} |",
         "",
     ]
+    if "modes" in h:
+        lines += ["## Per mode", "", "| Mode | Node | Edge | Orphan | Coverage |",
+                  "|---|---:|---:|---:|---:|"]
+        lines += [f"| {name} | {m['node_count']} | {m['edge_count']} | "
+                  f"{m['orphan_count']} | {m['file_refs_coverage']} |"
+                  for name, m in h["modes"].items()]
+        lines += [""]
+    lines += ["## Alasan verdict", ""]
     lines += [f"- {r}" for r in h["verdict_reasons"]] or ["- (tidak ada)"]
     lines += ["", "## Kontradiksi resolved", ""]
     lines += [f"- `{nid}`" for nid in h["resolved_contradiction_nodes"]] or ["- (tidak ada)"]

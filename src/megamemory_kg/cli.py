@@ -13,6 +13,12 @@ def main(argv: list[str] | None = None) -> int:
     if args and args[0] in ("--version", "version"):
         print(__version__)
         return 0
+    if args and args[0] == "modes":
+        from . import modes
+        return modes.main(args[1:])
+    if args and args[0] == "monthly":
+        from . import monthly_health
+        return monthly_health.main(args[1:])
     return reasoning.main(args)
 
 
